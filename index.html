@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S&P 500 Shiller CAPE Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0e12;
+    --bg-panel:  #0f1419;
+    --bg-row:    #131a22;
+    --border:    #1e2a35;
+    --border-hi: #2a3f52;
+    --text:      #c8d8e8;
+    --muted:     #4a6070;
+    --label:     #6a8090;
+    --green:     #00c97a;
+    --red:       #ff4d6a;
+    --amber:     #f5a623;
+    --blue:      #3a9fd8;
+    --teal:      #00c8b0;
+    --purple:    #9b7fe8;
+    --white:     #e8f0f8;
+
+    --zone-extreme: #ff4d6a;
+    --zone-high:    #f5a623;
+    --zone-elevated:#f5d020;
+    --zone-fair:    #00c97a;
+    --zone-cheap:   #3a9fd8;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    min-height: 100vh;
+    padding: 32px 24px 64px;
+  }
+
+  /* ── scanline overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.06) 2px,
+      rgba(0,0,0,0.06) 4px
+    );
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  .container { max-width: 900px; margin: 0 auto; }
+
+  /* ── header ── */
+  header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 32px;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .title-block {}
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: var(--blue);
+    text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  h1 {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--white);
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+  h1 span { color: var(--blue); }
+
+  .timestamp {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: right;
+    line-height: 1.8;
+  }
+  .timestamp .live-dot {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: var(--green);
+    border-radius: 50%;
+    margin-right: 5px;
+    animation: pulse 2s ease-in-out infinite;
+    vertical-align: middle;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.25; }
+  }
+
+  /* ── stat cards ── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: var(--bg-panel);
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 18px;
+    position: relative;
+    overflow: hidden;
+  }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+  .stat-card.blue::before   { background: var(--blue); }
+  .stat-card.amber::before  { background: var(--amber); }
+  .stat-card.teal::before   { background: var(--teal); }
+  .stat-card.purple::before { background: var(--purple); }
+
+  .stat-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.18em;
+    color: var(--label);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .stat-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--white);
+    line-height: 1;
+  }
+  .stat-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 5px;
+  }
+
+  /* ── section label ── */
+  .section-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.2em;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    padding-left: 2px;
+  }
+
+  /* ── table ── */
+  .table-wrap { margin-bottom: 28px; overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+  }
+  thead th {
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    padding: 8px 14px;
+    border-bottom: 0.5px solid var(--border);
+    text-align: left;
+    white-space: nowrap;
+  }
+  thead th.num { text-align: right; }
+
+  tbody tr {
+    border-bottom: 0.5px solid var(--border);
+    transition: background 0.12s;
+  }
+  tbody tr:hover { background: var(--bg-row); }
+  tbody tr.current-row {
+    background: rgba(58, 159, 216, 0.08);
+    border-top: 0.5px solid rgba(58, 159, 216, 0.3);
+    border-bottom: 0.5px solid rgba(58, 159, 216, 0.3);
+  }
+  tbody tr.mean-rev-row td { color: var(--label); }
+  tbody tr.mean-rev-row:hover td { color: var(--text); }
+
+  td {
+    padding: 10px 14px;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  td.num { text-align: right; }
+
+  .scenario-label { color: var(--label); font-size: 11.5px; }
+  tbody tr.current-row .scenario-label { color: var(--blue); }
+
+  .current-badge {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    padding: 1px 6px;
+    border: 0.5px solid var(--blue);
+    color: var(--blue);
+    border-radius: 3px;
+    margin-left: 8px;
+    vertical-align: middle;
+    text-transform: uppercase;
+  }
+  .mean-rev-badge {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    padding: 1px 6px;
+    border: 0.5px solid var(--muted);
+    color: var(--muted);
+    border-radius: 3px;
+    margin-left: 8px;
+    vertical-align: middle;
+    text-transform: uppercase;
+  }
+
+  .sp-val { color: var(--white); font-weight: 500; }
+  .cape-val { font-weight: 500; }
+
+  .chg-pos { color: var(--red); }
+  .chg-neg { color: var(--green); }
+  .chg-zero { color: var(--muted); }
+
+  /* zone badges */
+  .zone {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-weight: 500;
+  }
+  .zone-extreme  { color: var(--zone-extreme); border: 0.5px solid var(--zone-extreme); }
+  .zone-high     { color: var(--zone-high);    border: 0.5px solid var(--zone-high); }
+  .zone-elevated { color: var(--zone-elevated);border: 0.5px solid var(--zone-elevated); }
+  .zone-fair     { color: var(--zone-fair);    border: 0.5px solid var(--zone-fair); }
+  .zone-cheap    { color: var(--zone-cheap);   border: 0.5px solid var(--zone-cheap); }
+
+  /* ── CAPE bar ── */
+  .cape-bar-wrap { display: flex; align-items: center; gap: 8px; }
+  .cape-bar-track {
+    flex: 1;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: visible;
+    position: relative;
+    min-width: 60px;
+  }
+  .cape-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    position: absolute;
+    left: 0; top: 0;
+    transition: width 0.3s;
+  }
+
+  /* ── legend ── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 28px;
+    padding: 14px 18px;
+    background: var(--bg-panel);
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+  }
+  .legend-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    color: var(--muted);
+    text-transform: uppercase;
+    width: 100%;
+    margin-bottom: 4px;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--label);
+  }
+  .legend-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+  }
+
+  /* ── footnote ── */
+  .footnote {
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.7;
+    border-top: 0.5px solid var(--border);
+    padding-top: 18px;
+    margin-top: 8px;
+  }
+  .footnote strong { color: var(--label); }
+
+  /* ── error state ── */
+  .error-msg {
+    background: rgba(255,77,106,0.08);
+    border: 0.5px solid var(--red);
+    border-radius: 6px;
+    padding: 20px;
+    color: var(--red);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+
+  @media (max-width: 600px) {
+    h1 { font-size: 17px; }
+    .stat-value { font-size: 20px; }
+    td, thead th { padding: 8px 10px; }
+    .cape-bar-wrap { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="title-block">
+      <div class="eyebrow">Equity Valuation Monitor</div>
+      <h1>S&P 500 <span>/</span> Shiller CAPE</h1>
+    </div>
+    <div class="timestamp" id="ts">
+      <span class="live-dot"></span>Loading data...
+    </div>
+  </header>
+
+  <div id="error-area"></div>
+  <div id="stats" class="stats"></div>
+
+  <div class="section-label">Price sensitivity — fixed earnings base</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th class="num">SP500 level</th>
+          <th class="num">Change from today</th>
+          <th class="num">Shiller CAPE</th>
+          <th>Valuation zone</th>
+          <th>CAPE / max (44.19)</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+
+  <div class="legend" id="legend">
+    <div class="legend-title">Valuation zones</div>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--zone-extreme)"></span>Extreme ≥ 40</span>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--zone-high)"></span>High 32–39</span>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--zone-elevated)"></span>Elevated 25–31</span>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--zone-fair)"></span>Fair 18–24</span>
+    <span class="legend-item"><span class="legend-dot" style="background:var(--zone-cheap)"></span>Cheap &lt; 18</span>
+  </div>
+
+  <div class="section-label">Mean reversion reference</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th class="num">SP500 level</th>
+          <th class="num">Change from today</th>
+          <th class="num">Target CAPE</th>
+          <th>Valuation zone</th>
+        </tr>
+      </thead>
+      <tbody id="mr-body"></tbody>
+    </table>
+  </div>
+
+  <p class="footnote" id="footnote"></p>
+</div>
+
+<script>
+async function main() {
+  let data;
+  try {
+    const res = await fetch('data.json?_=' + Date.now());
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    data = await res.json();
+  } catch (e) {
+    document.getElementById('error-area').innerHTML =
+      `<div class="error-msg">Failed to load data.json — ${e.message}.<br>
+       Run <code>uv run fetch_cape.py</code> to generate it, then re-deploy.</div>`;
+    document.getElementById('ts').textContent = 'data unavailable';
+    return;
+  }
+
+  // Timestamp
+  const gen = new Date(data.generated_at);
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short'
+  });
+  document.getElementById('ts').innerHTML =
+    `<span class="live-dot"></span>Updated ${fmt.format(gen)}`;
+
+  // Stat cards
+  const implied_return = (100 / data.cape).toFixed(1);
+  const pct_above_20y  = ((data.cape / data.recent_20y_avg - 1) * 100).toFixed(0);
+  document.getElementById('stats').innerHTML = `
+    <div class="stat-card blue">
+      <div class="stat-label">S&amp;P 500</div>
+      <div class="stat-value">${data.sp500.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+      <div class="stat-sub">Current price level</div>
+    </div>
+    <div class="stat-card amber">
+      <div class="stat-label">Shiller CAPE</div>
+      <div class="stat-value">${data.cape}</div>
+      <div class="stat-sub">${pct_above_20y}% above 20-yr avg (${data.recent_20y_avg})</div>
+    </div>
+    <div class="stat-card teal">
+      <div class="stat-label">Earnings base</div>
+      <div class="stat-value">$${data.earnings_base.toFixed(2)}</div>
+      <div class="stat-sub">10-yr avg inflation-adj EPS</div>
+    </div>
+    <div class="stat-card purple">
+      <div class="stat-label">Earnings yield</div>
+      <div class="stat-value">${implied_return}%</div>
+      <div class="stat-sub">Implied (1 ÷ CAPE × 100)</div>
+    </div>
+  `;
+
+  const DOT_COM_MAX = data.dot_com_peak || 44.19;
+
+  function zoneColor(cls) {
+    const m = { 'zone-extreme':'var(--zone-extreme)', 'zone-high':'var(--zone-high)',
+                'zone-elevated':'var(--zone-elevated)', 'zone-fair':'var(--zone-fair)',
+                'zone-cheap':'var(--zone-cheap)' };
+    return m[cls] || 'var(--muted)';
+  }
+
+  function barHtml(cape) {
+    const pct = Math.min(100, Math.round(cape / DOT_COM_MAX * 100));
+    const cls  = zoneClass(cape);
+    const col  = zoneColor(cls);
+    return `<div class="cape-bar-wrap">
+      <div class="cape-bar-track">
+        <div class="cape-bar-fill" style="width:${pct}%;background:${col}"></div>
+      </div>
+      <span style="font-size:10px;color:var(--muted);min-width:28px;text-align:right">${pct}%</span>
+    </div>`;
+  }
+
+  function zoneClass(cape) {
+    if (cape >= 40) return 'zone-extreme';
+    if (cape >= 32) return 'zone-high';
+    if (cape >= 25) return 'zone-elevated';
+    if (cape >= 18) return 'zone-fair';
+    return 'zone-cheap';
+  }
+
+  function zoneLabel(cls) {
+    const m = { 'zone-extreme':'Extreme', 'zone-high':'High',
+                'zone-elevated':'Elevated', 'zone-fair':'Fair', 'zone-cheap':'Cheap' };
+    return m[cls];
+  }
+
+  function chgCell(pct) {
+    if (pct === 0) return `<td class="num chg-zero">—</td>`;
+    const cls = pct > 0 ? 'chg-pos' : 'chg-neg';
+    const sign = pct > 0 ? '+' : '';
+    return `<td class="num ${cls}">${sign}${pct.toFixed(1)}%</td>`;
+  }
+
+  // Main sensitivity table
+  const relRows = data.scenarios.filter(r => r.type === 'relative');
+  const tbody = document.getElementById('table-body');
+  relRows.forEach(r => {
+    const cls      = zoneClass(r.cape);
+    const isCur    = r.current;
+    const trCls    = isCur ? 'current-row' : '';
+    const badge    = isCur ? '<span class="current-badge">Now</span>' : '';
+    const capeFmt  = r.cape.toFixed(2);
+    tbody.innerHTML += `
+      <tr class="${trCls}">
+        <td class="scenario-label">${r.label}${badge}</td>
+        <td class="num sp-val">${r.sp500.toLocaleString()}</td>
+        ${chgCell(r.pct_change)}
+        <td class="num cape-val" style="color:${zoneColor(cls)}">${capeFmt}</td>
+        <td><span class="zone ${cls}">${zoneLabel(cls)}</span></td>
+        <td>${barHtml(r.cape)}</td>
+      </tr>`;
+  });
+
+  // Mean reversion table
+  const mrRows = data.scenarios.filter(r => r.type === 'mean_reversion');
+  const mrBody = document.getElementById('mr-body');
+  mrRows.forEach(r => {
+    const cls = zoneClass(r.cape);
+    mrBody.innerHTML += `
+      <tr class="mean-rev-row">
+        <td class="scenario-label">${r.label}<span class="mean-rev-badge">Target</span></td>
+        <td class="num sp-val">${r.sp500.toLocaleString()}</td>
+        ${chgCell(r.pct_change)}
+        <td class="num cape-val" style="color:${zoneColor(cls)}">${r.cape.toFixed(2)}</td>
+        <td><span class="zone ${cls}">${zoneLabel(cls)}</span></td>
+      </tr>`;
+  });
+
+  // Footnote
+  document.getElementById('footnote').innerHTML =
+    `<strong>Methodology:</strong> The CAPE denominator (10-year avg inflation-adjusted EPS = <strong>$${data.earnings_base.toFixed(2)}</strong>) is derived from the live price ÷ live CAPE and held fixed across all scenarios — it shifts slowly as old earnings years roll off. The CAPE bar shows each reading as a percentage of the all-time high (dot-com peak ${DOT_COM_MAX}). This is a valuation monitor, not a forecast. High CAPE correlates with lower forward returns but does not predict timing. Sources: <strong>multpl.com</strong> (Robert Shiller's official data), <strong>Yahoo Finance</strong> (SP500 fallback).`;
+}
+
+main();
+</script>
+</body>
+</html>
