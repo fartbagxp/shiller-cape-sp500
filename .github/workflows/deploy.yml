@@ -10,13 +10,9 @@ on:
     paths:
       - "fetch_cape.py"
       - "index.html"
-      - "requirements.txt"
       - ".github/workflows/deploy.yml"
 
-permissions:
-  contents: write   # needed to push to gh-pages branch
-  pages: write
-  id-token: write
+permissions: {}
 
 concurrency:
   group: pages
@@ -26,14 +22,16 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pages: write
       id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Install the latest version of uv
@@ -42,21 +40,24 @@ jobs:
           version: "latest"
 
       - name: Fetch live CAPE + SP500 data
-        run: |
-          uv run fetch_cape.py
+        run: uv run fetch_cape.py
 
       - name: Verify data.json was created
+        run: cat data.json
+
+      - name: Assemble site
         run: |
-          echo "=== data.json ==="
-          cat data.json
+          mkdir _site
+          cp index.html data.json _site/
+
+      - name: Configure Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+        with:
+          path: _site
 
       - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./
-          publish_branch: gh-pages
-          # Only publish these files, source files not needed
-          include_files: |
-            index.html
-            data.json
+        id: deploy
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
