@@ -33,13 +33,13 @@ fetch_cape.py          →  data.json        →  index.html
 
 ```bash
 # Install dependencies
-uv pip install -r requirements.txt
+uv sync
 
 # Fetch live data
-python fetch_cape.py
+uv run python fetch_cape.py
 
 # Serve locally (any static server)
-python -m http.server 8080
+uv run python -m http.server 8080
 # then open http://localhost:8080
 ```
 
@@ -75,7 +75,7 @@ Edit `.github/workflows/deploy.yml`:
 ```yaml
 on:
   schedule:
-    - cron: "30 21 * * 1-5" # Mon–Fri 21:30 UTC = 4:30 PM ET
+    - cron: '30 21 * * 1-5' # Mon–Fri 21:30 UTC = 4:30 PM ET
 ```
 
 ---
