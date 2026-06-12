@@ -133,6 +133,7 @@
   .stat-card.amber::before  { background: var(--amber); }
   .stat-card.teal::before   { background: var(--teal); }
   .stat-card.purple::before { background: var(--purple); }
+  .stat-card.red::before    { background: var(--red); }
 
   .stat-label {
     font-family: 'IBM Plex Mono', monospace;
@@ -428,12 +429,34 @@ async function main() {
   // Stat cards
   const implied_return = (100 / data.cape).toFixed(1);
   const pct_above_20y  = ((data.cape / data.recent_20y_avg - 1) * 100).toFixed(0);
+
+  let peakCardHtml = '';
+  if (data.recent_peak) {
+    const p = data.recent_peak;
+    const pctFromPeak = ((data.sp500 / p.peak_sp500 - 1) * 100).toFixed(1);
+    const pctSign     = pctFromPeak >= 0 ? '+' : '';
+    const windowLabel = p.window_days >= 360 ? '52-week high' : `${p.window_days}-day peak`;
+    let dateStr = '';
+    if (p.peak_date) {
+      const peakDate = new Date(p.peak_date + 'T12:00:00Z');
+      const peakFmt  = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      dateStr = peakFmt.format(peakDate) + ' &nbsp;·&nbsp; ';
+    }
+    peakCardHtml = `
+    <div class="stat-card red">
+      <div class="stat-label">${windowLabel}</div>
+      <div class="stat-value">${p.peak_sp500.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
+      <div class="stat-sub">${dateStr}${pctSign}${pctFromPeak}% from peak</div>
+    </div>`;
+  }
+
   document.getElementById('stats').innerHTML = `
     <div class="stat-card blue">
       <div class="stat-label">S&amp;P 500</div>
       <div class="stat-value">${data.sp500.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
       <div class="stat-sub">Current price level</div>
     </div>
+    ${peakCardHtml}
     <div class="stat-card amber">
       <div class="stat-label">Shiller CAPE</div>
       <div class="stat-value">${data.cape}</div>

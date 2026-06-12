@@ -16,9 +16,12 @@ Dependencies (see requirements.txt):
   httpx, beautifulsoup4, lxml
 """
 
+import csv
+import io
 import json
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -83,24 +86,40 @@ def fetch_sp500() -> float:
   return raw
 
 
-def fetch_sp500_yahoo() -> float:
-  """Fallback: fetch S&P 500 from Yahoo Finance quote page."""
+def fetch_sp500_yahoo() -> dict:
+  """
+  Scrape S&P 500 quote page.  Returns dict with current price and 52-week high.
+  Parsing both from the same request avoids a second Yahoo call (rate-limit risk).
+  """
   url = "https://finance.yahoo.com/quote/%5EGSPC/"
   resp = httpx.get(url, headers=HEADERS, timeout=15, follow_redirects=True)
   resp.raise_for_status()
   soup = BeautifulSoup(resp.text, "lxml")
 
-  # Yahoo Finance fin-streamer for regularMarketPrice
+  # Current price
+  sp500 = None
   el = soup.find("fin-streamer", {"data-symbol": "^GSPC", "data-field": "regularMarketPrice"})
   if el and el.get("value"):
-    return float(el["value"].replace(",", ""))
+    sp500 = float(el["value"].replace(",", ""))
 
-  # Fallback: look for the large price display
-  el = soup.find("span", {"data-testid": "qsp-price"})
-  if el:
-    return float(el.get_text(strip=True).replace(",", ""))
+  if sp500 is None:
+    el = soup.find("span", {"data-testid": "qsp-price"})
+    if el:
+      sp500 = float(el.get_text(strip=True).replace(",", ""))
 
-  raise ValueError("Could not parse SP500 from Yahoo Finance")
+  if sp500 is None:
+    raise ValueError("Could not parse SP500 price from Yahoo Finance")
+
+  # 52-week high from the range table  e.g. "52 Week Range5,943.23 - 7,620.90"
+  high_52w = None
+  for el in soup.find_all("li"):
+    text = el.get_text(strip=True)
+    m = re.match(r"52 Week Range[\s\d,.]+-\s*([\d,]+\.?\d*)", text)
+    if m:
+      high_52w = float(m.group(1).replace(",", ""))
+      break
+
+  return {"sp500": sp500, "high_52w": high_52w}
 
 
 def fetch_sp500_multpl_direct() -> float:
@@ -120,6 +139,96 @@ def fetch_sp500_multpl_direct() -> float:
     raise ValueError(f"Could not parse from: {text!r}")
 
   return float(match.group().replace(",", ""))
+
+
+RECENT_PEAK_WINDOW_DAYS = 30
+
+
+def fetch_sp500_stooq_peak(window_days: int = RECENT_PEAK_WINDOW_DAYS) -> dict:
+  """
+  Fetch recent daily closes from stooq.com (no API key, no rate limits shared with Yahoo).
+  Returns the peak close and date within the window.
+  """
+  url = "https://stooq.com/q/d/l/?s=%5Espx&i=d"
+  resp = httpx.get(url, headers=HEADERS, timeout=15, follow_redirects=True)
+  resp.raise_for_status()
+
+  reader = csv.DictReader(io.StringIO(resp.text))
+  rows = list(reader)
+  if not rows:
+    raise ValueError("stooq returned empty CSV")
+
+  cutoff = datetime.now(timezone.utc).timestamp() - window_days * 86400
+  peak_close = None
+  peak_date  = None
+
+  for row in rows:
+    try:
+      date_str = row.get("Date") or row.get("date") or list(row.values())[0]
+      close    = float(row.get("Close") or row.get("close") or list(row.values())[4])
+      dt       = datetime.strptime(date_str.strip(), "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except (ValueError, KeyError, IndexError):
+      continue
+    if dt.timestamp() < cutoff:
+      continue
+    if peak_close is None or close > peak_close:
+      peak_close = close
+      peak_date  = date_str.strip()
+
+  if peak_close is None:
+    raise ValueError(f"No SP500 data within last {window_days} days from stooq")
+
+  return {
+    "sp500": None,  # stooq data may lag; don't use as current price
+    "peak": {
+      "peak_sp500":  round(peak_close, 2),
+      "peak_date":   peak_date,
+      "window_days": window_days,
+    },
+  }
+
+
+def fetch_sp500_yahoo_chart(window_days: int = RECENT_PEAK_WINDOW_DAYS) -> dict:
+  """
+  Single Yahoo Finance chart API call returning both current price and recent peak.
+  Avoids two separate Yahoo requests (which triggers 429 rate-limits).
+  """
+  time.sleep(2)  # brief pause after Yahoo HTML scrape to avoid 429
+  url = (
+    f"https://query2.finance.yahoo.com/v8/finance/chart/%5EGSPC"
+    f"?interval=1d&range={window_days}d"
+  )
+  resp = httpx.get(url, headers=HEADERS, timeout=15, follow_redirects=True)
+  resp.raise_for_status()
+  body = resp.json()
+
+  result     = body["chart"]["result"][0]
+  closes     = result["indicators"]["quote"][0]["close"]
+  timestamps = result["timestamp"]
+
+  last_close = None
+  peak_close = None
+  peak_ts    = None
+  for ts, close in zip(timestamps, closes):
+    if close is None:
+      continue
+    last_close = close
+    if peak_close is None or close > peak_close:
+      peak_close = close
+      peak_ts    = ts
+
+  if last_close is None:
+    raise ValueError("No close prices returned from Yahoo Finance chart API")
+
+  peak_date = datetime.fromtimestamp(peak_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+  return {
+    "sp500": round(last_close, 2),
+    "peak": {
+      "peak_sp500":  round(peak_close, 2),
+      "peak_date":   peak_date,
+      "window_days": window_days,
+    },
+  }
 
 
 def build_scenarios(sp500: float, cape: float) -> list[dict]:
@@ -204,12 +313,15 @@ def main() -> None:
   cape = fetch_cape()
   print(f"  CAPE: {cape}")
 
-  print("Fetching S&P 500 price...")
-  sp500 = None
+  print("Fetching S&P 500 price + recent peak...")
+  sp500    = None
+  high_52w = None
+  peak     = None
+
+  # 1. Try multpl sources (return float, no peak data)
   for fetcher, name in [
     (fetch_sp500_multpl_direct, "multpl (value page)"),
     (fetch_sp500,               "multpl (returns page)"),
-    (fetch_sp500_yahoo,         "Yahoo Finance"),
   ]:
     try:
       sp500 = fetcher()
@@ -217,6 +329,42 @@ def main() -> None:
       break
     except Exception as exc:
       print(f"  [{name}] failed: {exc}")
+
+  # 2. Yahoo Finance HTML — returns current price AND 52-week high in one request
+  if sp500 is None:
+    try:
+      ydata    = fetch_sp500_yahoo()
+      sp500    = ydata["sp500"]
+      high_52w = ydata.get("high_52w")
+      print(f"  SP500: {sp500:,.2f}  (source: Yahoo Finance (quote page))")
+      if high_52w:
+        print(f"  52-week high: {high_52w:,.2f}")
+    except Exception as exc:
+      print(f"  [Yahoo Finance (quote page)] failed: {exc}")
+
+  # 3. Last resort — Yahoo chart API (gives price + 30-day peak, one request)
+  if sp500 is None:
+    try:
+      chart = fetch_sp500_yahoo_chart()
+      sp500 = chart["sp500"]
+      peak  = chart["peak"]
+      print(f"  SP500: {sp500:,.2f}  (source: Yahoo Finance chart)")
+      print(f"  Peak: {peak['peak_sp500']:,.2f} on {peak['peak_date']} (last {peak['window_days']}d)")
+    except Exception as exc:
+      print(f"  [Yahoo Finance chart] failed: {exc}")
+
+  # 4. If we have price but no peak yet, try chart API for peak (with 52-week high as fallback)
+  if sp500 is not None and peak is None:
+    try:
+      chart = fetch_sp500_yahoo_chart()
+      peak  = chart["peak"]
+      print(f"  Peak: {peak['peak_sp500']:,.2f} on {peak['peak_date']} (last {peak['window_days']}d, source: Yahoo chart)")
+    except Exception as exc:
+      print(f"  [Yahoo chart peak] failed: {exc}")
+      # Fall back to 52-week high (no date available)
+      if high_52w is not None:
+        peak = {"peak_sp500": high_52w, "peak_date": None, "window_days": 365}
+        print(f"  Peak (52-week high, no date): {high_52w:,.2f}")
 
   if sp500 is None:
     print("ERROR: all SP500 sources failed", file=sys.stderr)
@@ -236,6 +384,7 @@ def main() -> None:
     "long_run_avg_cape": LONG_RUN_AVG_CAPE,
     "recent_20y_avg":    RECENT_20Y_AVG_CAPE,
     "dot_com_peak":      DOT_COM_PEAK_CAPE,
+    "recent_peak":       peak,
     "scenarios":         scenarios,
   }
 
