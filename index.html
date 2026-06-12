@@ -133,7 +133,6 @@
   .stat-card.amber::before  { background: var(--amber); }
   .stat-card.teal::before   { background: var(--teal); }
   .stat-card.purple::before { background: var(--purple); }
-  .stat-card.red::before    { background: var(--red); }
 
   .stat-label {
     font-family: 'IBM Plex Mono', monospace;
@@ -200,6 +199,12 @@
   }
   tbody tr.mean-rev-row td { color: var(--label); }
   tbody tr.mean-rev-row:hover td { color: var(--text); }
+  tbody tr.peak-row {
+    background: rgba(255, 77, 106, 0.06);
+    border-top: 0.5px solid rgba(255, 77, 106, 0.3);
+    border-bottom: 0.5px solid rgba(255, 77, 106, 0.3);
+  }
+  tbody tr.peak-row .scenario-label { color: var(--red); }
 
   td {
     padding: 10px 14px;
@@ -230,6 +235,18 @@
     padding: 1px 6px;
     border: 0.5px solid var(--muted);
     color: var(--muted);
+    border-radius: 3px;
+    margin-left: 8px;
+    vertical-align: middle;
+    text-transform: uppercase;
+  }
+  .peak-badge {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    padding: 1px 6px;
+    border: 0.5px solid var(--red);
+    color: var(--red);
     border-radius: 3px;
     margin-left: 8px;
     vertical-align: middle;
@@ -430,33 +447,12 @@ async function main() {
   const implied_return = (100 / data.cape).toFixed(1);
   const pct_above_20y  = ((data.cape / data.recent_20y_avg - 1) * 100).toFixed(0);
 
-  let peakCardHtml = '';
-  if (data.recent_peak) {
-    const p = data.recent_peak;
-    const pctFromPeak = ((data.sp500 / p.peak_sp500 - 1) * 100).toFixed(1);
-    const pctSign     = pctFromPeak >= 0 ? '+' : '';
-    const windowLabel = p.window_days >= 360 ? '52-week high' : `${p.window_days}-day peak`;
-    let dateStr = '';
-    if (p.peak_date) {
-      const peakDate = new Date(p.peak_date + 'T12:00:00Z');
-      const peakFmt  = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-      dateStr = peakFmt.format(peakDate) + ' &nbsp;·&nbsp; ';
-    }
-    peakCardHtml = `
-    <div class="stat-card red">
-      <div class="stat-label">${windowLabel}</div>
-      <div class="stat-value">${p.peak_sp500.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
-      <div class="stat-sub">${dateStr}${pctSign}${pctFromPeak}% from peak</div>
-    </div>`;
-  }
-
   document.getElementById('stats').innerHTML = `
     <div class="stat-card blue">
       <div class="stat-label">S&amp;P 500</div>
       <div class="stat-value">${data.sp500.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
       <div class="stat-sub">Current price level</div>
     </div>
-    ${peakCardHtml}
     <div class="stat-card amber">
       <div class="stat-label">Shiller CAPE</div>
       <div class="stat-value">${data.cape}</div>
@@ -516,15 +512,24 @@ async function main() {
     return `<td class="num ${cls}">${sign}${pct.toFixed(1)}%</td>`;
   }
 
-  // Main sensitivity table
-  const relRows = data.scenarios.filter(r => r.type === 'relative');
+  // Main sensitivity table (relative rows + peak row)
+  const relRows = data.scenarios.filter(r => r.type === 'relative' || r.type === 'peak');
   const tbody = document.getElementById('table-body');
   relRows.forEach(r => {
-    const cls      = zoneClass(r.cape);
-    const isCur    = r.current;
-    const trCls    = isCur ? 'current-row' : '';
-    const badge    = isCur ? '<span class="current-badge">Now</span>' : '';
-    const capeFmt  = r.cape.toFixed(2);
+    const cls     = zoneClass(r.cape);
+    const isCur   = r.current;
+    const isPeak  = r.type === 'peak';
+    const trCls   = isCur ? 'current-row' : isPeak ? 'peak-row' : '';
+    let badge = '';
+    if (isCur)  badge = '<span class="current-badge">Now</span>';
+    if (isPeak) {
+      const dateStr = r.peak_date
+        ? ' · ' + new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+            .format(new Date(r.peak_date + 'T12:00:00Z'))
+        : '';
+      badge = `<span class="peak-badge">Peak${dateStr}</span>`;
+    }
+    const capeFmt = r.cape.toFixed(2);
     tbody.innerHTML += `
       <tr class="${trCls}">
         <td class="scenario-label">${r.label}${badge}</td>

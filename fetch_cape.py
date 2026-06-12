@@ -376,6 +376,32 @@ def main() -> None:
   for row in scenarios:
     row["zone"] = valuation_zone(row["cape"])
 
+  # Insert peak as a scenario row at the correct SP500 position
+  if peak is not None:
+    peak_level = peak["peak_sp500"]
+    peak_cape  = round(peak_level / earnings_base, 2)
+    pct_change = round((peak_level - sp500) / sp500 * 100, 1)
+    window     = peak["window_days"]
+    label      = "52-week high" if window >= 360 else f"{window}-day peak"
+    peak_row   = {
+      "label":      label,
+      "sp500":      peak_level,
+      "cape":       peak_cape,
+      "pct_change": pct_change,
+      "current":    False,
+      "type":       "peak",
+      "peak_date":  peak.get("peak_date"),
+    }
+    peak_row["zone"] = valuation_zone(peak_cape)
+
+    # Splice into the relative rows (sorted descending by SP500 level)
+    rel_end = next(i for i, r in enumerate(scenarios) if r["type"] != "relative")
+    insert_at = next(
+      (i for i in range(rel_end) if scenarios[i]["sp500"] <= peak_level),
+      rel_end,
+    )
+    scenarios.insert(insert_at, peak_row)
+
   payload = {
     "generated_at":      datetime.now(timezone.utc).isoformat(),
     "sp500":             sp500,
@@ -384,7 +410,6 @@ def main() -> None:
     "long_run_avg_cape": LONG_RUN_AVG_CAPE,
     "recent_20y_avg":    RECENT_20Y_AVG_CAPE,
     "dot_com_peak":      DOT_COM_PEAK_CAPE,
-    "recent_peak":       peak,
     "scenarios":         scenarios,
   }
 
