@@ -295,6 +295,103 @@
     transition: width 0.3s;
   }
 
+  /* ── peak chart ── */
+  .chart-panel {
+    background: var(--bg-panel);
+    border: 0.5px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px 10px;
+    margin-bottom: 12px;
+  }
+  .chart-readout {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 18px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    min-height: 16px;
+  }
+  .chart-readout .ro-date  { color: var(--label); }
+  .chart-readout .ro-val   { color: var(--white); font-weight: 500; }
+  .chart-readout .ro-peak  { color: var(--red); }
+  #peak-chart { width: 100%; display: block; cursor: crosshair; }
+  #peak-chart text { font-family: 'IBM Plex Mono', monospace; }
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    padding-top: 6px;
+    border-top: 0.5px solid var(--border);
+  }
+  .chart-legend span { display: flex; align-items: center; gap: 6px; }
+  .lg-swatch { width: 10px; height: 10px; border-radius: 50%; }
+
+  .chart-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .chart-controls .ctl-gap { flex: 1; }
+  .range-btn {
+    background: none;
+    border: 0.5px solid var(--border-hi);
+    color: var(--label);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    padding: 4px 9px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.12s, border-color 0.12s, background 0.12s;
+  }
+  .range-btn:hover { color: var(--white); border-color: var(--blue); }
+  .range-btn.active {
+    color: var(--blue);
+    border-color: var(--blue);
+    background: rgba(58, 159, 216, 0.1);
+  }
+  .chart-readout .ro-note { color: var(--amber); }
+  .monthly-note {
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: var(--muted);
+    padding-top: 8px;
+    margin-top: 6px;
+    border-top: 0.5px solid var(--border);
+  }
+
+  /* ── peak table extras ── */
+  .peak-toggle {
+    background: none;
+    border: 0.5px solid var(--border-hi);
+    color: var(--label);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 12px;
+  }
+  .peak-toggle:hover { color: var(--white); border-color: var(--blue); }
+  tbody.records-only tr.interim-peak { display: none; }
+  tbody tr.record-peak .peak-date { color: var(--red); }
+  tbody tr.latest-peak {
+    background: rgba(255, 77, 106, 0.06);
+    border-top: 0.5px solid rgba(255, 77, 106, 0.3);
+    border-bottom: 0.5px solid rgba(255, 77, 106, 0.3);
+  }
+  .peak-date { color: var(--white); }
+  .muted-cell { color: var(--muted); }
+
   /* ── legend ── */
   .legend {
     display: flex;
@@ -355,6 +452,7 @@
     .stat-value { font-size: 20px; }
     td, thead th { padding: 8px 10px; }
     .cape-bar-wrap { display: none; }
+    .chart-panel { padding: 12px 8px 8px; }
   }
 </style>
 </head>
@@ -373,6 +471,38 @@
 
   <div id="error-area"></div>
   <div id="stats" class="stats"></div>
+
+  <div id="peak-section" style="display:none">
+    <div class="section-label" id="peak-chart-label">Peak history</div>
+    <div class="chart-panel">
+      <div class="chart-controls" id="chart-controls"></div>
+      <div class="chart-readout" id="chart-readout"></div>
+      <svg id="peak-chart" role="img" aria-label="S&amp;P 500 daily closes with peaks marked"></svg>
+      <div class="chart-legend">
+        <span><span class="lg-swatch" style="background:var(--blue)"></span>Daily close</span>
+        <span><span class="lg-swatch" style="background:var(--red)"></span>Record high</span>
+        <span><span class="lg-swatch" style="background:none;border:1px solid var(--label)"></span>Interim peak</span>
+        <span><span class="lg-swatch" style="background:var(--amber);border-radius:1px;width:14px;height:2px"></span>Highest close in window</span>
+      </div>
+      <div class="monthly-note" id="monthly-note" style="display:none"></div>
+    </div>
+    <button class="peak-toggle" id="peak-toggle"></button>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Peak date</th>
+            <th class="num">SP500 close</th>
+            <th class="num">CAPE at that level<br>(today's EPS base)</th>
+            <th class="num">Pullback after</th>
+            <th>Back above on</th>
+            <th class="num">vs today</th>
+          </tr>
+        </thead>
+        <tbody id="peaks-body" class="records-only"></tbody>
+      </table>
+    </div>
+  </div>
 
   <div class="section-label">Price sensitivity — fixed earnings base</div>
   <div class="table-wrap">
@@ -522,6 +652,11 @@ async function main() {
     const trCls   = isCur ? 'current-row' : isPeak ? 'peak-row' : '';
     let badge = '';
     if (isCur)  badge = '<span class="current-badge">Now</span>';
+    // At a fresh high the peak row would just duplicate this one, so the peak
+    // is called out here instead — the dated history lives in the chart above.
+    if (isCur && r.at_peak) {
+      badge += `<span class="peak-badge">${r.peak_window_days}-day high</span>`;
+    }
     if (isPeak) {
       const dateStr = r.peak_date
         ? ' · ' + new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -556,9 +691,337 @@ async function main() {
       </tr>`;
   });
 
+
+  // ── peak history: chart + dated table ───────────────────────────────────────
+  const dayFmt   = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const monFmt   = new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' });
+  const tickFmt  = new Intl.DateTimeFormat('en-US', { month: 'short', year: '2-digit' });
+  const yearFmt  = new Intl.DateTimeFormat('en-US', { year: 'numeric' });
+
+  function parseDay(iso) { return new Date(iso + 'T12:00:00Z'); }
+  function fmtDay(iso)   { return dayFmt.format(parseDay(iso)); }
+  function fmtNum(v)     { return v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+
+  // A monthly-average point knows its month but not its day — say so rather than
+  // printing a day multpl's data cannot actually support.
+  function fmtPeakDay(pk) { return pk.monthly ? monFmt.format(parseDay(pk.date)) : fmtDay(pk.date); }
+
+  // Snap a log-axis tick to a round level (1,500 / 2,000 / 2,500 …).
+  function niceRound(v) {
+    const step = Math.pow(10, Math.floor(Math.log10(v))) / 2;
+    return Math.round(v / step) * step;
+  }
+
+  // "6901d ago" is not a readable age; past a year, say it in years.
+  function fmtAge(days) {
+    if (days < 365) return `${days}d ago`;
+    const years = days / 365.25;
+    return years < 10 ? `${years.toFixed(1)}y ago` : `${Math.round(years)}y ago`;
+  }
+
+  function renderPeakSection(data) {
+    const history = data.history || [];
+    const ranges  = data.chart_ranges || [];
+    if (history.length < 2 || !ranges.length) return;   // no history fetched
+
+    document.getElementById('peak-section').style.display = '';
+
+    let range = ranges.includes(data.default_range) ? data.default_range : ranges[0];
+    let logScale = range >= 10;
+
+    const svg   = document.getElementById('peak-chart');
+    const times = history.map(r => parseDay(r.date).getTime());
+
+    // ── range + scale controls ──
+    const ctl = document.getElementById('chart-controls');
+    ctl.innerHTML =
+      ranges.map(y => `<button class="range-btn" data-range="${y}">${y}Y</button>`).join('')
+      + '<span class="ctl-gap"></span>'
+      + '<button class="range-btn" id="scale-btn" title="Switch between linear and log price axis">LOG</button>';
+
+    function syncControls() {
+      ctl.querySelectorAll('[data-range]').forEach(b =>
+        b.classList.toggle('active', Number(b.dataset.range) === range));
+      document.getElementById('scale-btn').classList.toggle('active', logScale);
+    }
+
+    ctl.querySelectorAll('[data-range]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        range = Number(btn.dataset.range);
+        // Long windows are unreadable on a linear axis, so they open on log —
+        // but an explicit choice at this range is not overridden.
+        logScale = range >= 10;
+        syncControls();
+        redraw();
+      });
+    });
+    document.getElementById('scale-btn').addEventListener('click', () => {
+      logScale = !logScale;
+      syncControls();
+      redraw();
+    });
+
+    // ── per-range slice ──
+    let view;   // { rows, peaks, windowHigh, firstTime, lastTime }
+
+    function buildView() {
+      const cutoff = Date.now() - range * 365.25 * 86400 * 1000;
+      const start  = Math.max(0, times.findIndex(t => t >= cutoff));
+      const rows   = history.slice(start);
+      const peaks  = data.peaks_by_range[String(range)] || [];
+      const top    = rows.reduce((a, b) => (b.close > a.close ? b : a));
+      view = {
+        rows,
+        peaks,
+        windowHigh: peaks.find(pk => pk.window_high) || { date: top.date, sp500: top.close },
+        firstTime:  parseDay(rows[0].date).getTime(),
+        lastTime:   parseDay(rows[rows.length - 1].date).getTime(),
+        monthly:    rows.some(r => r.monthly),
+      };
+    }
+
+    let draw;   // geometry from the last paint, reused by the hover handler
+
+    function paint() {
+      const W = svg.clientWidth || svg.parentElement.clientWidth;
+      if (!W) return;
+      const H   = W < 520 ? 210 : 280;
+      const pad = { t: 16, r: W < 520 ? 44 : 58, b: 22, l: 6 };
+      const { rows, peaks, windowHigh, firstTime, lastTime } = view;
+
+      const closes = rows.map(r => r.close);
+      const lo = Math.min(...closes), hi = Math.max(...closes);
+      const span = (hi - lo) || 1;
+      // Log padding has to be multiplicative — subtracting a share of the range
+      // from a 20-year low pushes the axis floor far below any price ever traded
+      // and squashes the whole line into the top half of the plot.
+      const yMin = logScale ? lo / 1.06 : Math.max(0, lo - span * 0.06);
+      const yMax = logScale ? hi * 1.10 : hi + span * 0.08;
+
+      const plotW = W - pad.l - pad.r;
+      const plotH = H - pad.t - pad.b;
+      const tSpan = (lastTime - firstTime) || 1;
+      const x = t => pad.l + (t - firstTime) / tSpan * plotW;
+
+      const lgMin = Math.log(yMin), lgMax = Math.log(yMax);
+      const y = v => logScale
+        ? pad.t + (lgMax - Math.log(Math.max(v, yMin))) / (lgMax - lgMin) * plotH
+        : pad.t + (yMax - v) / (yMax - yMin) * plotH;
+
+      // gridlines + right-hand price labels.  Log ticks are snapped to round
+      // levels first and then positioned, so a label always sits on the price
+      // it names.
+      let grid = '';
+      const TICKS = 4;
+      const ticks = [];
+      for (let k = 0; k <= TICKS; k++) {
+        const f = k / TICKS;
+        const raw = logScale ? Math.exp(lgMin + (lgMax - lgMin) * f) : yMin + (yMax - yMin) * f;
+        const v = logScale ? niceRound(raw) : raw;
+        if (v > yMin && v < yMax && !ticks.includes(v)) ticks.push(v);
+      }
+      ticks.forEach(v => {
+        const yy = y(v);
+        grid += `<line x1="${pad.l}" y1="${yy}" x2="${W - pad.r}" y2="${yy}" stroke="var(--border)" stroke-width="0.5"/>`
+             +  `<text x="${W - pad.r + 6}" y="${yy + 3}" font-size="9" fill="var(--muted)">${Math.round(v).toLocaleString()}</text>`;
+      });
+
+      // date ticks — months on short windows, years once the span gets long.
+      // Long spans snap to January so the labels read 2008 / 2012 / 2016 rather
+      // than drifting across mid-year points that round to uneven years.
+      let xTicks = '';
+      const TICK_COUNT = W < 520 ? 3 : 6;
+      const marks = [];
+      if (range > 3) {
+        const first = new Date(firstTime).getUTCFullYear();
+        const last  = new Date(lastTime).getUTCFullYear();
+        const step  = Math.max(1, Math.ceil((last - first + 1) / TICK_COUNT));
+        for (let yr = Math.ceil(first / step) * step; yr <= last; yr += step) {
+          const t = Date.UTC(yr, 0, 1);
+          if (t >= firstTime && t <= lastTime) marks.push({ t, label: String(yr) });
+        }
+      } else {
+        for (let k = 0; k <= TICK_COUNT; k++) {
+          const t = firstTime + tSpan * k / TICK_COUNT;
+          marks.push({ t, label: tickFmt.format(new Date(t)) });
+        }
+      }
+      marks.forEach(({ t, label }, k) => {
+        const edge = x(t) < 20 ? 'start' : x(t) > W - pad.r - 20 ? 'end' : 'middle';
+        xTicks += `<text x="${x(t)}" y="${H - 6}" font-size="9" fill="var(--muted)" text-anchor="${edge}">${label}</text>`;
+      });
+
+      const line = rows.map((r, i) =>
+        `${i ? 'L' : 'M'}${x(parseDay(r.date).getTime()).toFixed(1)},${y(r.close).toFixed(1)}`).join('');
+      const area = `${line}L${x(lastTime).toFixed(1)},${(pad.t + plotH).toFixed(1)}L${x(firstTime).toFixed(1)},${(pad.t + plotH).toFixed(1)}Z`;
+
+      // window-high guide line + label
+      const whY = y(windowHigh.sp500);
+      const guide =
+        `<line x1="${pad.l}" y1="${whY}" x2="${W - pad.r}" y2="${whY}" stroke="var(--amber)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>`
+      + `<text x="${pad.l + 4}" y="${whY - 5}" font-size="10" fill="var(--amber)">Window high ${Math.round(windowHigh.sp500).toLocaleString()} · ${fmtPeakDay(windowHigh)}</text>`;
+
+      // peak markers — record highs filled, interim tops hollow
+      const dots = peaks.map(pk => {
+        const cx = x(parseDay(pk.date).getTime()), cy = y(pk.sp500);
+        if (pk.record_high) {
+          return `<circle cx="${cx}" cy="${cy}" r="${pk.window_high ? 4.5 : 3.2}" fill="var(--red)" stroke="var(--bg-panel)" stroke-width="1"/>`;
+        }
+        return `<circle cx="${cx}" cy="${cy}" r="2.6" fill="none" stroke="var(--label)" stroke-width="1"/>`;
+      }).join('');
+
+      const last = rows[rows.length - 1];
+      const today = `<circle cx="${x(lastTime)}" cy="${y(last.close)}" r="3.5" fill="var(--blue)" stroke="var(--bg-panel)" stroke-width="1"/>`;
+
+      svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+      svg.setAttribute('height', H);
+      svg.innerHTML = `
+        <defs>
+          <linearGradient id="areaFill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"   stop-color="var(--blue)" stop-opacity="0.28"/>
+            <stop offset="100%" stop-color="var(--blue)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        ${grid}
+        <path d="${area}" fill="url(#areaFill)"/>
+        <path d="${line}" fill="none" stroke="var(--blue)" stroke-width="1.4" stroke-linejoin="round"/>
+        ${guide}${dots}${today}${xTicks}
+        <g id="hover-group" style="display:none">
+          <line id="hover-line" y1="${pad.t}" y2="${H - pad.b}" stroke="var(--border-hi)" stroke-width="1"/>
+          <circle id="hover-dot" r="3" fill="var(--white)"/>
+        </g>`;
+
+      draw = { x, y, pad, W, plotW, firstTime, tSpan };
+    }
+
+    function readout(i) {
+      const r  = view.rows[i];
+      const wh = view.windowHigh.sp500;
+      const off = (r.close - wh) / wh * 100;
+      const offTxt = off >= -0.05
+        ? '<span class="ro-peak">at the window high</span>'
+        : `<span class="ro-peak">${off.toFixed(1)}%</span> from window high`;
+      const avg = r.monthly ? '<span class="ro-note">monthly avg</span>' : '';
+      document.getElementById('chart-readout').innerHTML =
+        `<span class="ro-date">${r.monthly ? monFmt.format(parseDay(r.date)) : fmtDay(r.date)}</span>`
+      + `<span class="ro-val">${fmtNum(r.close)}</span>`
+      + `<span>${offTxt}</span>${avg}`;
+    }
+
+    function hover(evt) {
+      if (!draw) return;
+      const rect = svg.getBoundingClientRect();
+      const px   = (evt.clientX - rect.left) * (draw.W / rect.width);
+      const t    = draw.firstTime + (px - draw.pad.l) / draw.plotW * draw.tSpan;
+
+      // nearest point by date — the series is denser in recent years, so stepping
+      // by index would not track the cursor
+      let best = 0, bestGap = Infinity;
+      view.rows.forEach((r, i) => {
+        const gap = Math.abs(parseDay(r.date).getTime() - t);
+        if (gap < bestGap) { bestGap = gap; best = i; }
+      });
+
+      const g = svg.querySelector('#hover-group');
+      if (!g) return;
+      const cx = draw.x(parseDay(view.rows[best].date).getTime());
+      g.style.display = '';
+      svg.querySelector('#hover-line').setAttribute('x1', cx);
+      svg.querySelector('#hover-line').setAttribute('x2', cx);
+      svg.querySelector('#hover-dot').setAttribute('cx', cx);
+      svg.querySelector('#hover-dot').setAttribute('cy', draw.y(view.rows[best].close));
+      readout(best);
+    }
+
+    function unhover() {
+      const g = svg.querySelector('#hover-group');
+      if (g) g.style.display = 'none';
+      readout(view.rows.length - 1);
+    }
+
+    // ── dated peak table ──
+    const body   = document.getElementById('peaks-body');
+    const toggle = document.getElementById('peak-toggle');
+
+    function renderTable() {
+      const rows = [...view.peaks].reverse();
+      body.innerHTML = rows.map(pk => {
+        const cls = [
+          pk.record_high ? 'record-peak' : 'interim-peak',
+          pk.in_progress ? 'latest-peak' : '',
+        ].filter(Boolean).join(' ');
+
+        const badge = pk.in_progress
+          ? '<span class="peak-badge">Standing</span>'
+          : pk.window_high ? '<span class="peak-badge">Window high</span>' : '';
+        const avg = pk.monthly ? '<span class="mean-rev-badge">Monthly avg</span>' : '';
+
+        const pullback = pk.in_progress && pk.drawdown_pct < 0.05
+          ? '<td class="num muted-cell">—</td>'
+          : `<td class="num chg-neg">−${pk.drawdown_pct.toFixed(1)}%</td>`;
+
+        const recovered = pk.recovered_on
+          ? `<td>${pk.monthly ? monFmt.format(parseDay(pk.recovered_on)) : fmtDay(pk.recovered_on)}</td>`
+          : `<td class="muted-cell">${pk.in_progress ? 'current high' : 'not yet'}</td>`;
+
+        const zcls = zoneClass(pk.cape);
+        return `
+          <tr class="${cls}">
+            <td class="peak-date">${fmtPeakDay(pk)}<span class="scenario-label"> · ${fmtAge(pk.days_ago)}</span>${badge}${avg}</td>
+            <td class="num sp-val">${fmtNum(pk.sp500)}</td>
+            <td class="num cape-val" style="color:${zoneColor(zcls)}">${pk.cape.toFixed(2)}</td>
+            ${pullback}
+            ${recovered}
+            ${chgCell(pk.pct_from_today)}
+          </tr>`;
+      }).join('');
+
+      const recordCnt = rows.filter(pk => pk.record_high).length;
+      const threshold = data.peak_thresholds[String(range)];
+      toggle.textContent = body.classList.contains('records-only')
+        ? `Show all ${rows.length} peaks (≥${threshold}% pullback)`
+        : `Show record highs only (${recordCnt})`;
+    }
+
+    toggle.addEventListener('click', () => {
+      body.classList.toggle('records-only');
+      renderTable();
+    });
+
+    function redraw() {
+      buildView();
+      document.getElementById('peak-chart-label').textContent =
+        `Peak history — closes, last ${range} years`;
+      const note = document.getElementById('monthly-note');
+      note.style.display = view.monthly ? '' : 'none';
+      note.textContent = view.monthly
+        ? `Before ${fmtDay(data.daily_from)} the series is multpl's monthly averages of daily closes, `
+          + 'so peaks in that span are dated to the month and their levels are averages rather than true highs.'
+        : '';
+      paint();
+      unhover();
+      renderTable();
+    }
+
+    svg.addEventListener('pointermove', hover);
+    svg.addEventListener('pointerleave', unhover);
+
+    let resizeTimer;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => { paint(); unhover(); }, 120);
+    });
+
+    syncControls();
+    redraw();
+  }
+
+  renderPeakSection(data);
+
   // Footnote
+  const ranges = data.chart_ranges || [];
   document.getElementById('footnote').innerHTML =
-    `<strong>Methodology:</strong> The CAPE denominator (10-year avg inflation-adjusted EPS = <strong>$${data.earnings_base.toFixed(2)}</strong>) is derived from the live price ÷ live CAPE and held fixed across all scenarios — it shifts slowly as old earnings years roll off. The CAPE bar shows each reading as a percentage of the all-time high (dot-com peak ${DOT_COM_MAX}). This is a valuation monitor, not a forecast. High CAPE correlates with lower forward returns but does not predict timing. Sources: <strong>multpl.com</strong> (Robert Shiller's official data), <strong>Yahoo Finance</strong> (SP500 fallback).`;
+    `<strong>Methodology:</strong> The CAPE denominator (10-year avg inflation-adjusted EPS = <strong>$${data.earnings_base.toFixed(2)}</strong>) is derived from the live price ÷ live CAPE and held fixed across all scenarios — it shifts slowly as old earnings years roll off. The CAPE bar shows each reading as a percentage of the all-time high (dot-com peak ${DOT_COM_MAX}). <strong>Peaks:</strong> a peak is banked once price falls below a running high by the selected range's threshold (${ranges.map(y => `${y}Y ≥${data.peak_thresholds[String(y)]}%`).join(', ')}), so one rally counts once rather than once per record-high day — a wider window needs a wider threshold or twenty years would bank a hundred peaks. “Record high” means the close cleared every close before it <em>within the selected window</em>, and CAPE at each peak applies today's earnings base to that price level rather than the earnings of the day. This is a valuation monitor, not a forecast. High CAPE correlates with lower forward returns but does not predict timing. Sources: <strong>multpl.com</strong> (Robert Shiller's official data, plus monthly averages beyond ten years), <strong>Yahoo Finance</strong> (SP500 fallback), <strong>FRED</strong> (daily close history, last ten years).`;
 }
 
 main();
