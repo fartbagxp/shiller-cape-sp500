@@ -153,6 +153,32 @@ on:
 │       └── deploy.yml      # CI/CD: fetch → build → deploy
 ├── fetch_cape.py           # Data fetcher (writes data.json)
 ├── index.html              # Dashboard UI (reads data.json at runtime)
-├── requirements.txt        # Python deps
+├── favicon.ico             # Tab icon, 16/32/48 px
+├── apple-touch-icon.png    # iOS home-screen icon, 180 px
+├── sp500-shiller.jpg       # Icon source art, 2048 px (not deployed)
+├── pyproject.toml          # Python deps (managed by uv)
 └── README.md
+```
+
+Anything the site needs has to be named in the workflow's `Assemble site` step —
+it copies files in explicitly rather than publishing the whole repo.
+
+### Regenerating the icons
+
+Both icons are cut from `sp500-shiller.jpg`. The tab sizes use a tight crop with a
+contrast boost, without which the bars blur into one green block at 16 px; the iOS
+icon keeps more margin so its rounded corners do not clip the chart.
+
+```bash
+# tab icon — tight crop on the artwork, contrast-boosted per size
+magick sp500-shiller.jpg -crop 1160x1160+450+410 +repage /tmp/tight.png
+for sz in 16 32 48; do
+  magick /tmp/tight.png -resize ${sz}x${sz} -sigmoidal-contrast 4x40% \
+    -unsharp 0x0.6+1.0+0 -strip PNG32:/tmp/ico-$sz.png
+done
+magick /tmp/ico-16.png /tmp/ico-32.png /tmp/ico-48.png favicon.ico
+
+# iOS icon — roomier crop
+magick sp500-shiller.jpg -crop 1240x1240+410+370 +repage -resize 180x180 \
+  -strip PNG32:apple-touch-icon.png
 ```
