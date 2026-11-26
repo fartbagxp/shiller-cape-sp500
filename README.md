@@ -12,7 +12,7 @@ table showing what the CAPE would be at various market levels.
 
 ```bash
 fetch_cape.py          →  data.json        →  index.html
-(scrapes multpl.com)      (written to disk)   (reads at page load)
+(Yahoo, Shiller, FRED)    (written to disk)   (reads at page load)
 ```
 
 1. The GitHub Actions workflow runs on a schedule (weekdays at ~4:30 PM ET) and
@@ -59,23 +59,28 @@ uv run python -m http.server 8080
 
 | Data point             | Primary source             | Fallback                |
 | ---------------------- | -------------------------- | ----------------------- |
-| Shiller CAPE           | multpl.com/shiller-pe      | —                       |
-| S&P 500 price          | multpl.com/s-p-500-value   | Yahoo Finance (^GSPC)   |
+| Shiller CAPE           | multpl.com/shiller-pe      | Live price ÷ E10 from Shiller's `ie_data.xls` |
+| S&P 500 price          | Yahoo Finance (^GSPC)      | Yahoo Finance chart API |
 | Daily closes (≤10 yr)  | FRED (series `SP500`)      | Yahoo Finance chart API |
-| Monthly levels (>10 yr)| multpl historical prices   | —                       |
+| Monthly levels (>10 yr)| Shiller's `ie_data.xls`    | multpl historical prices |
 
 FRED serves 10 years of daily closes with no API key or rate limit, so it leads the
 history chain. It does stall on a browser `User-Agent`, hence the separate
 `FRED_HEADERS` in `fetch_cape.py`.
 
 Nothing free supplies daily S&P 500 closes past ten years — Yahoo rate-limits hard and
-Stooq now sits behind a JS challenge — so years 10–20 come from multpl's monthly table.
+Stooq now sits behind a JS challenge — so years 10–20 come from Shiller's monthly series.
 Those are Shiller's **monthly averages** of daily closes, not month-end closes, so a
 peak found in that span is accurate to the month and its level is an average rather
 than a true high. Points and peaks from it are tagged `monthly`, the chart footnotes it,
 and the peak table badges those rows.
 
-Shiller PE data is sourced from Robert Shiller's dataset as published at multpl.com.
+Shiller PE data comes from Robert Shiller's dataset. multpl.com republishes it with a
+live CAPE; when multpl is down, `fetch_cape.py` does the same calculation itself. It
+downloads `ie_data.xls` (the link is read off shillerdata.com because its URL changes
+with every upload), takes E10 (the 10-year average of real earnings) from the newest
+CAPE row as real price ÷ CAPE, and divides the live price by it. `data.json` records
+which path was taken in `cape_source`, plus `e10_as_of`.
 
 ---
 
@@ -128,7 +133,7 @@ Tuning: `HISTORY_YEARS` sets the total lookback, `DAILY_YEARS` how far the daily
 reaches, `PEAK_THRESHOLDS` which ranges appear and how selective each scan is, and
 `DEFAULT_RANGE` which one the chart opens on. A range is only offered if the fetched
 history actually covers 80% of it, so the 20Y button disappears rather than lying if
-multpl is unreachable.
+the monthly source is unreachable.
 
 ---
 

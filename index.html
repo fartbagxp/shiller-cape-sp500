@@ -706,7 +706,7 @@ async function main() {
   function fmtNum(v)     { return v.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
 
   // A monthly-average point knows its month but not its day — say so rather than
-  // printing a day multpl's data cannot actually support.
+  // printing a day Shiller's monthly data cannot actually support.
   function fmtPeakDay(pk) { return pk.monthly ? monFmt.format(parseDay(pk.date)) : fmtDay(pk.date); }
 
   // Snap a log-axis tick to a round level (1,500 / 2,000 / 2,500 …).
@@ -998,7 +998,7 @@ async function main() {
       const note = document.getElementById('monthly-note');
       note.style.display = view.monthly ? '' : 'none';
       note.textContent = view.monthly
-        ? `Before ${fmtDay(data.daily_from)} the series is multpl's monthly averages of daily closes, `
+        ? `Before ${fmtDay(data.daily_from)} the series is Shiller's monthly averages of daily closes, `
           + 'so peaks in that span are dated to the month and their levels are averages rather than true highs.'
         : '';
       paint();
@@ -1024,7 +1024,7 @@ async function main() {
   // Footnote
   const ranges = data.chart_ranges || [];
   document.getElementById('footnote').innerHTML =
-    `<strong>Methodology:</strong> The CAPE denominator (10-year avg inflation-adjusted EPS = <strong>$${data.earnings_base.toFixed(2)}</strong>) is derived from the live price ÷ live CAPE and held fixed across all scenarios — it shifts slowly as old earnings years roll off. The CAPE bar shows each reading as a percentage of the all-time high (dot-com peak ${DOT_COM_MAX}). <strong>Peaks:</strong> a peak is banked once price falls below a running high by the selected range's threshold (${ranges.map(y => `${y}Y ≥${data.peak_thresholds[String(y)]}%`).join(', ')}), so one rally counts once rather than once per record-high day — a wider window needs a wider threshold or twenty years would bank a hundred peaks. “Record high” means the close cleared every close before it <em>within the selected window</em>, and CAPE at each peak applies today's earnings base to that price level rather than the earnings of the day. This is a valuation monitor, not a forecast. High CAPE correlates with lower forward returns but does not predict timing. Sources: <strong>multpl.com</strong> (Robert Shiller's official data, plus monthly averages beyond ten years), <strong>Yahoo Finance</strong> (SP500 fallback), <strong>FRED</strong> (daily close history, last ten years).`;
+    `<strong>Methodology:</strong> The CAPE denominator (10-year avg inflation-adjusted EPS = <strong>$${data.earnings_base.toFixed(2)}</strong>) is derived from the live price ÷ live CAPE and held fixed across all scenarios — it shifts slowly as old earnings years roll off. The CAPE bar shows each reading as a percentage of the all-time high (dot-com peak ${DOT_COM_MAX}). <strong>Peaks:</strong> a peak is banked once price falls below a running high by the selected range's threshold (${ranges.map(y => `${y}Y ≥${data.peak_thresholds[String(y)]}%`).join(', ')}), so one rally counts once rather than once per record-high day — a wider window needs a wider threshold or twenty years would bank a hundred peaks. “Record high” means the close cleared every close before it <em>within the selected window</em>, and CAPE at each peak applies today's earnings base to that price level rather than the earnings of the day. This is a valuation monitor, not a forecast. High CAPE correlates with lower forward returns but does not predict timing. Sources: <strong>${data.cape_source === 'Shiller dataset' ? `Robert Shiller's dataset` : 'multpl.com'}</strong> (CAPE${data.e10_as_of ? `, live price ÷ 10-year real earnings as of ${data.e10_as_of}` : ''}), <strong>Robert Shiller's dataset</strong> (monthly averages beyond ten years), <strong>Yahoo Finance</strong> (SP500 price), <strong>FRED</strong> (daily close history, last ten years).`;
 }
 
 main();
