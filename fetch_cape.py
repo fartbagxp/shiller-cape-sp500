@@ -5,18 +5,21 @@ Fetches live Shiller CAPE ratio and S&P 500 price, then writes data.json
 for the GitHub Pages dashboard.
 
 Sources:
-  - CAPE ratio: multpl.com/shiller-pe  (Robert Shiller's official data series)
-  - S&P 500:    multpl.com/s-p-500-historical-annual-returns (or Yahoo Finance fallback)
+  - S&P 500:    Yahoo Finance (^GSPC) quote page, then the Yahoo chart API
+  - CAPE ratio: multpl.com/shiller-pe, else computed as live price / E10 from
+                Robert Shiller's own dataset (shillerdata.com ie_data.xls)
+  - History:    FRED daily closes (10 years), Shiller monthly averages before that
 
 Usage:
   uv run fetch_cape.py
   python fetch_cape.py
 
-Dependencies (see requirements.txt):
-  httpx, beautifulsoup4, lxml
+Dependencies (see pyproject.toml):
+  httpx, beautifulsoup4, lxml, xlrd
 """
 
 import csv
+import html
 import io
 import json
 import re
@@ -26,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
+import xlrd
 from bs4 import BeautifulSoup
 
 HEADERS = {
@@ -66,6 +70,99 @@ def fetch_cape() -> float:
     raise ValueError(f"Could not parse CAPE value from: {text!r}")
 
   return float(match.group().replace(",", ""))
+
+
+SHILLER_PAGE = "https://shillerdata.com/"
+# Columns of the "Data" sheet we read, checked against the header row so a
+# reshuffled spreadsheet fails loudly instead of yielding a wrong CAPE.
+SHILLER_HEADER_ROW = 7
+SHILLER_COLS = {"date": (0, "Date"), "price": (1, "P"), "real_price": (7, "Price"), "cape": (12, "CAPE")}
+SHILLER_STALE_DAYS = 120  # warn when the newest CAPE row is older than this
+
+
+def fetch_shiller_rows() -> list[dict]:
+  """
+  Robert Shiller's monthly dataset (ie_data.xls), the series multpl republishes.
+  The download link carries a per-upload id, so it is read off shillerdata.com
+  rather than hardcoded — the old Yale and unversioned links serve stale copies.
+
+  Returns [{"date": "YYYY-MM-01", "price", "real_price", "cape"}, ...] oldest
+  first.  `price` is the monthly average of daily closes (the current month is
+  partial); `real_price` and `cape` are None where Shiller has not filled them.
+  """
+  page = httpx.get(SHILLER_PAGE, headers=HEADERS, timeout=20, follow_redirects=True)
+  page.raise_for_status()
+  m = re.search(r'''(?:https?:)?//[^"'\s]+/ie_data\.xls[^"'\s]*''', page.text)
+  if not m:
+    raise ValueError("No ie_data.xls link found on shillerdata.com")
+  url = html.unescape(m.group())
+  if url.startswith("//"):
+    url = "https:" + url
+
+  resp = httpx.get(url, headers=HEADERS, timeout=60, follow_redirects=True)
+  resp.raise_for_status()
+  sheet = xlrd.open_workbook(file_contents=resp.content).sheet_by_name("Data")
+
+  header = sheet.row_values(SHILLER_HEADER_ROW)
+  for name, (col, label) in SHILLER_COLS.items():
+    if str(header[col]).strip() != label:
+      raise ValueError(f"Shiller sheet layout changed: column {col} is {header[col]!r}, expected {label!r} ({name})")
+
+  def num(v):
+    return v if isinstance(v, float) else None
+
+  rows = []
+  for r in range(SHILLER_HEADER_ROW + 1, sheet.nrows):
+    vals  = sheet.row_values(r)
+    date  = num(vals[SHILLER_COLS["date"][0]])
+    price = num(vals[SHILLER_COLS["price"][0]])
+    if date is None or price is None:
+      continue
+    # Dates are year.month floats: 2026.01 is January, 2026.1 is October.
+    year  = int(date)
+    month = round((date - year) * 100)
+    if not 1 <= month <= 12:
+      continue
+    rows.append({
+      "date":       f"{year:04d}-{month:02d}-01",
+      "price":      price,
+      "real_price": num(vals[SHILLER_COLS["real_price"][0]]),
+      "cape":       num(vals[SHILLER_COLS["cape"][0]]),
+    })
+
+  if not rows:
+    raise ValueError("Shiller dataset had no usable rows")
+  return rows
+
+
+def cape_from_shiller(rows: list[dict], sp500: float) -> dict:
+  """
+  Live CAPE the way multpl computes it: today's price over E10, Shiller's 10-year
+  average of real earnings.  E10 is backed out of his newest CAPE row as
+  real price / CAPE; that row's real price is in its own month's dollars, which
+  is today's month (or close to it), so the live nominal price divides straight in.
+  """
+  latest = next((r for r in reversed(rows) if r["cape"] and r["real_price"]), None)
+  if latest is None:
+    raise ValueError("No CAPE values in Shiller dataset")
+
+  e10    = latest["real_price"] / latest["cape"]
+  as_of  = datetime.strptime(latest["date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+  age    = (datetime.now(timezone.utc) - as_of).days
+  if age > SHILLER_STALE_DAYS:
+    print(f"  WARNING: Shiller E10 is from {latest['date'][:7]} ({age} days old)")
+  return {"cape": round(sp500 / e10, 2), "e10": round(e10, 2), "as_of": latest["date"][:7]}
+
+
+def shiller_monthly_history(rows: list[dict], years: float | None = None) -> list[dict]:
+  """Shiller's monthly price averages in the shape build_history() merges."""
+  years  = HISTORY_YEARS if years is None else years
+  cutoff = datetime.now(timezone.utc).timestamp() - years * 365.25 * 86400
+  return [
+    {"date": r["date"], "close": round(r["price"], 2), "monthly": True}
+    for r in rows
+    if datetime.strptime(r["date"], "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() >= cutoff
+  ]
 
 
 def fetch_sp500() -> float:
@@ -431,24 +528,31 @@ def fetch_sp500_history_multpl(years: float = HISTORY_YEARS) -> list[dict]:
   return history
 
 
-def build_history() -> dict:
+def build_history(shiller_rows: list[dict] | None = None) -> dict:
   """
   Assemble the price series the chart draws from: daily closes for as far back as
-  a daily source reaches, with multpl's monthly averages filling the years before
-  that.  Returns the merged series plus the date the daily data starts, which is
-  the boundary the UI warns about.
+  a daily source reaches, with Shiller's monthly averages (from his dataset, or
+  multpl's copy of it) filling the years before that.  Returns the merged series
+  plus the date the daily data starts, which is the boundary the UI warns about.
   """
   daily = fetch_sp500_history_chained()
   daily_from = daily[0]["date"]
 
+  monthly_sources = []
+  if shiller_rows:
+    monthly_sources.append((lambda: shiller_monthly_history(shiller_rows), "Shiller dataset"))
+  monthly_sources.append((fetch_sp500_history_multpl, "multpl"))
+
   older = []
-  try:
-    monthly = fetch_sp500_history_multpl()
-    older   = [r for r in monthly if r["date"] < daily_from]
+  for fetcher, name in monthly_sources:
+    try:
+      older = [r for r in fetcher() if r["date"] < daily_from]
+    except Exception as exc:
+      print(f"  [{name} monthly history] failed: {exc}")
+      continue
     if older:
-      print(f"  Monthly fill: {len(older)} points ({older[0]['date']} → {older[-1]['date']}, multpl averages)")
-  except Exception as exc:
-    print(f"  [multpl monthly history] failed: {exc}")
+      print(f"  Monthly fill: {len(older)} points ({older[0]['date']} → {older[-1]['date']}, {name} averages)")
+      break
 
   series = older + daily
   return {
@@ -640,9 +744,15 @@ def dump_payload(payload: dict) -> str:
 
 
 def main() -> None:
-  print("Fetching Shiller CAPE ratio...")
-  cape = fetch_cape()
-  print(f"  CAPE: {cape}")
+  # Shiller's dataset backs both the CAPE fallback and the pre-FRED monthly
+  # history, so it is downloaded once up front.
+  print("Fetching Shiller dataset...")
+  shiller_rows = None
+  try:
+    shiller_rows = fetch_shiller_rows()
+    print(f"  Shiller: {len(shiller_rows)} months ({shiller_rows[0]['date'][:7]} → {shiller_rows[-1]['date'][:7]})")
+  except Exception as exc:
+    print(f"  [Shiller dataset] failed: {exc}")
 
   print("Fetching S&P 500 price + recent peak...")
   sp500    = None
@@ -689,9 +799,38 @@ def main() -> None:
   history:    list[dict] = []
   by_range:   dict       = {}
   daily_from: str | None = None
+  if sp500 is None:
+    print("ERROR: all SP500 sources failed", file=sys.stderr)
+    sys.exit(1)
+
+  # CAPE: multpl's live figure if it answers, otherwise the same calculation
+  # done here — live price over Shiller's E10.
+  print("Fetching Shiller CAPE ratio...")
+  cape        = None
+  cape_source = None
+  e10_as_of   = None
+  try:
+    cape        = fetch_cape()
+    cape_source = "multpl.com"
+  except Exception as exc:
+    print(f"  [multpl CAPE] failed: {exc}")
+  if cape is None and shiller_rows:
+    try:
+      derived     = cape_from_shiller(shiller_rows, sp500)
+      cape        = derived["cape"]
+      e10_as_of   = derived["as_of"]
+      cape_source = "Shiller dataset"
+      print(f"  E10: {derived['e10']:,.2f} (Shiller, as of {e10_as_of})")
+    except Exception as exc:
+      print(f"  [Shiller CAPE] failed: {exc}")
+  if cape is None:
+    print("ERROR: all CAPE sources failed", file=sys.stderr)
+    sys.exit(1)
+  print(f"  CAPE: {cape}  (source: {cape_source})")
+
   if sp500 is not None:
     try:
-      built      = build_history()
+      built      = build_history(shiller_rows)
       full       = built["series"]
       daily_from = built["daily_from"]
       print(f"  History: {len(full)} points ({full[0]['date']} → {full[-1]['date']}, {built['years']:.1f} years)")
@@ -724,10 +863,6 @@ def main() -> None:
       if high_52w is not None:
         peak = {"peak_sp500": high_52w, "peak_date": None, "window_days": 365}
         print(f"  Peak (52-week high, no date): {high_52w:,.2f}")
-
-  if sp500 is None:
-    print("ERROR: all SP500 sources failed", file=sys.stderr)
-    sys.exit(1)
 
   earnings_base = round(sp500 / cape, 2)
   scenarios     = build_scenarios(sp500, cape)
@@ -777,6 +912,8 @@ def main() -> None:
     "generated_at":      datetime.now(timezone.utc).isoformat(),
     "sp500":             sp500,
     "cape":              cape,
+    "cape_source":       cape_source,
+    "e10_as_of":         e10_as_of,
     "earnings_base":     earnings_base,
     "long_run_avg_cape": LONG_RUN_AVG_CAPE,
     "recent_20y_avg":    RECENT_20Y_AVG_CAPE,
